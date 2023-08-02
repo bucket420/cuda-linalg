@@ -15,7 +15,7 @@ public:
     int height;
 
     Matrix(int width, int height) : width(width), height(height) {
-        this->data = (float*) calloc((size_t) this->width * this->height, sizeof(float));
+        this->data = (float*) calloc(this->width * this->height, sizeof(float));
     }
 
     ~Matrix() {
@@ -39,18 +39,18 @@ public:
         }
     }
 
-    void zero_pad(int block_size) {
+    void zero_pad(int blockSize) {
         int padded_width, padded_height;
-        if (this->width % block_size == 0 && this->height % block_size == 0) {
+        if (this->width % blockSize == 0 && this->height % blockSize == 0) {
             return;
         }
-        if (this->width % block_size != 0) {
-            padded_width = (this->width / block_size + 1) * block_size;
+        if (this->width % blockSize != 0) {
+            padded_width = (this->width / blockSize + 1) * blockSize;
         }
-        if (this->height % block_size != 0) {
-            padded_height = (this->height / block_size + 1) * block_size;
+        if (this->height % blockSize != 0) {
+            padded_height = (this->height / blockSize + 1) * blockSize;
         }
-        float *padded_data = (float*) calloc((size_t) padded_width * padded_height, sizeof(float));
+        float *padded_data = (float*) calloc(padded_width * padded_height, sizeof(float));
         for (int i = 0; i < this->height; i++) {
             memcpy(padded_data + i * padded_width, this->data + i * this->width, this->width * sizeof(float));
         }
@@ -59,109 +59,97 @@ public:
         this->width = padded_width;
         this->height = padded_height;
     }
+
+    void zero() {
+        memset(this->data, 0, this->width * this->height * sizeof(float));
+    }
 };
 
-__global__ void mmul_kernel(const float *A, const float *B, float *C, int A_width, int C_width, int C_height) {
+__global__ void matrixMulSharedMemoryKernel(const float *A, const float *B, float *C, int widthA, int widthC, int heightC) {
     extern __shared__ float cache[];
     float *As = cache;
     float *Bs = &cache[blockDim.x * blockDim.x];
-    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < C_width; idx += blockDim.x * gridDim.x) {
-        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < C_height; idy += blockDim.y * gridDim.y) {
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < widthC; idx += blockDim.x * gridDim.x) {
+        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < heightC; idy += blockDim.y * gridDim.y) {
             float temp = 0;
             for (int i = 0; i < gridDim.x; i++) {
-                As[threadIdx.y * blockDim.x + threadIdx.x] = A[idy * A_width + (i * blockDim.x + threadIdx.x)];
-                Bs[threadIdx.y * blockDim.x + threadIdx.x] = B[(i * blockDim.x + threadIdx.y) * C_width + idx];
+                As[threadIdx.y * blockDim.x + threadIdx.x] = A[idy * widthA + (i * blockDim.x + threadIdx.x)];
+                Bs[threadIdx.y * blockDim.x + threadIdx.x] = B[(i * blockDim.x + threadIdx.y) * widthC + idx];
                 __syncthreads();
                 for (int k = 0; k < blockDim.x; k++) {
                     temp += As[threadIdx.y * blockDim.x + k] * Bs[k * blockDim.x + threadIdx.x];
                 }
                 __syncthreads();
             }
-            C[idy * C_width + idx] += temp;
+            C[idy * widthC + idx] += temp;
         }
     }
 }
 
-__global__ void mmul_kernel_not_shared(const float *A, const float *B, float *C, int A_width, int C_width, int C_height) {
-    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < C_width; idx += blockDim.x * gridDim.x) {
-        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < C_height; idy += blockDim.y * gridDim.y) {
+__global__ void matrixMulKernel(const float *A, const float *B, float *C, int widthA, int widthC, int heightC) {
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < widthC; idx += blockDim.x * gridDim.x) {
+        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < heightC; idy += blockDim.y * gridDim.y) {
             float temp = 0;
             for (int i = 0; i < gridDim.x * blockDim.x; i++) 
-                temp += A[idy * A_width + i] * B[i * C_width + idx];   // dot product of row and column
-            C[idy * C_width + idx] += temp;
+                temp += A[idy * widthA + i] * B[i * widthC + idx];   // dot product of row and column
+            C[idy * widthC + idx] += temp;
         }
     }
 }
 
-void mmul_sequential(Matrix* A, Matrix *B, Matrix* C) {
+void matrixMulSequential(Matrix* A, Matrix *B, Matrix* C) {
     for (int i = 0; i < C->height; i++) {
         for (int j = 0; j < C->width; j++) {
+            float sum = 0.0f;
             for (int k = 0; k < A->width; k++) {
-                C->data[i * C->width + j] += A->data[i * A->width + k] * B->data[k * B->width + j];
+                sum += A->data[i * A->width + k] * B->data[k * B->width + j];
             }
+            C->data[i * C->width + j] = sum;
         }
     }
 }
 
-void mmul(Matrix* A, Matrix *B, Matrix* C, int block_size, dim3 grid) {
-    A->zero_pad(block_size);
-    B->zero_pad(block_size);
-    C->zero_pad(block_size);
-    float *d_A, *d_B, *d_C;
-    cudaMalloc(&d_A, A->width * A->height * sizeof(float));
-    cudaMalloc(&d_B, B->width * B->height * sizeof(float));
-    cudaMalloc(&d_C, C->width * C->height * sizeof(float));
-    cudaMemcpy(d_A, A->data, A->width * A->height * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, B->data, B->width * B->height * sizeof(float), cudaMemcpyHostToDevice);
-    dim3 block(block_size, block_size); 
-    mmul_kernel<<<grid, block, 2 * block_size * block_size * sizeof(float)>>>(d_A, d_B, d_C, A->width, C->width, C->height);
-    cudaMemcpy(C->data, d_C, C->width * C->height * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
-}
-
-void mmul_not_shared(Matrix* A, Matrix *B, Matrix* C, int block_size, dim3 grid) {
-    A->zero_pad(block_size);
-    B->zero_pad(block_size);
-    C->zero_pad(block_size);
-    float *d_A, *d_B, *d_C;
-    cudaMalloc(&d_A, A->width * A->height * sizeof(float));
-    cudaMalloc(&d_B, B->width * B->height * sizeof(float));
-    cudaMalloc(&d_C, C->width * C->height * sizeof(float));
-    cudaMemcpy(d_A, A->data, A->width * A->height * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_B, B->data, B->width * B->height * sizeof(float), cudaMemcpyHostToDevice);
-    dim3 block(block_size, block_size); 
-    mmul_kernel_not_shared<<<grid, block>>>(d_A, d_B, d_C, A->width, C->width, C->height);
-    cudaMemcpy(C->data, d_C, C->width * C->height * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(d_A);
-    cudaFree(d_B);
-    cudaFree(d_C);
+void matrixMul(Matrix* A, Matrix *B, Matrix* C, int blockSize, dim3 grid, int useSharedMemory) {
+    A->zero_pad(blockSize);
+    B->zero_pad(blockSize);
+    C->zero_pad(blockSize);
+    float *dA, *dB, *dC;
+    cudaMalloc(&dA, A->width * A->height * sizeof(float));
+    cudaMalloc(&dB, B->width * B->height * sizeof(float));
+    cudaMalloc(&dC, C->width * C->height * sizeof(float));
+    cudaMemcpy(dA, A->data, A->width * A->height * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dB, B->data, B->width * B->height * sizeof(float), cudaMemcpyHostToDevice);
+    dim3 block(blockSize, blockSize); 
+    if (useSharedMemory) {
+        matrixMulSharedMemoryKernel<<<grid, block, 2 * blockSize * blockSize * sizeof(float)>>>(dA, dB, dC, A->width, C->width, C->height);
+    } else {
+        matrixMulKernel<<<grid, block>>>(dA, dB, dC, A->width, C->width, C->height);
+    }
+    cudaMemcpy(C->data, dC, C->width * C->height * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(dA);
+    cudaFree(dB);
+    cudaFree(dC);
 }
 
 int main()
 {
-    const int block_size = 16;
-    dim3 grid(128, 128);
-    int A_width = 10000;
-    int C_width = 10000;
-    int C_height = 10000;
+    const int blockSize = 2;
+    dim3 grid(4, 4);
+    int widthA = 11;
+    int widthC = 11;
+    int heightC = 11;
 
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
     std::uniform_real_distribution<> dis(0.0, 10.0);
 
     // these are just for timing
-    clock_t t0, t1, t2, t3;
-    double t1sum = 0.0;
-    double t2sum = 0.0;
+    clock_t t0, t1, t2, t3, t4, t5;
 
     // create matrices
-    Matrix *A = new Matrix(A_width, C_height);
-    Matrix *B = new Matrix(C_width, A_width);
-    // Matrix *C_sequential = new Matrix(C_width, C_height);
-    Matrix *C = new Matrix(C_width, C_height);
-    // Matrix *C_CUDA_not_shared = new Matrix(C_width, C_height);
+    Matrix *A = new Matrix(widthA, heightC);
+    Matrix *B = new Matrix(widthC, widthA);
+    Matrix *C = new Matrix(widthC, heightC);
 
     // initialize matrices
     for (int i = 0; i < A->height; i++) {
@@ -183,21 +171,33 @@ int main()
     B->print();
 
     // multiply
+    if (widthC <= 1000 && heightC <= 1000) {
+        t4 = clock();
+        matrixMulSequential(A, B, C);
+        t5 = clock();
+        printf("Matrix C (sequential):\n");
+        C->print();
+        printf("Compute took %f seconds (sequential)\n", ((double)(t5 - t4)) / CLOCKS_PER_SEC);
+    }
+    C->zero();
+
     t0 = clock();
-    mmul(A, B, C, block_size, grid);
+    matrixMul(A, B, C, blockSize, grid, 1);
     t1 = clock();
     printf("Matrix C (CUDA shared):\n");
     C->print();
-    t1sum = ((double)(t1 - t0)) / CLOCKS_PER_SEC;
-    printf("Compute took %f seconds (CUDA shared)\n", t1sum);
+    printf("Compute took %f seconds (CUDA shared)\n", ((double)(t1 - t0)) / CLOCKS_PER_SEC);
 
-
+    C->zero();
 
     t2 = clock();
-    mmul_not_shared(A, B, C, block_size, grid);
+    matrixMul(A, B, C, blockSize, grid, 0);
     t3 = clock();
     printf("Matrix C (CUDA not shared):\n");
     C->print();
-    t2sum = ((double)(t3 - t2)) / CLOCKS_PER_SEC;
-    printf("Compute took %f seconds (CUDA not shared)\n", t2sum);
+    printf("Compute took %f seconds (CUDA not shared)\n", ((double)(t3 - t2)) / CLOCKS_PER_SEC);
+
+    delete A;
+    delete B;
+    delete C;
 }
