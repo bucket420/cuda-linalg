@@ -92,7 +92,7 @@ __global__ void matrixMulKernel(const float *A, const float *B, float *C, int wi
             float temp = 0;
             for (int i = 0; i < widthA; i++) 
                 temp += A[idy * widthA + i] * B[i * widthC + idx];   // dot product of row and column
-            C[idy * widthC + idx] += temp;
+            C[idy * widthC + idx] = temp;
         }
     }
 }
@@ -133,11 +133,11 @@ void matrixMul(Matrix* A, Matrix *B, Matrix* C, int blockSize, dim3 grid, int us
 
 int main()
 {
-    const int blockSize = 4;
+    const int blockSize = 2;
     dim3 grid(2, 2);
-    int widthA = 15;
-    int widthC = 15;
-    int heightC = 15;
+    int widthA = 6;
+    int widthC = 6;
+    int heightC = 6;
 
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
