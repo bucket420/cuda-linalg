@@ -72,7 +72,7 @@ __global__ void matrixMulSharedMemoryKernel(const float *A, const float *B, floa
     for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < widthC; idx += blockDim.x * gridDim.x) {
         for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < heightC; idy += blockDim.y * gridDim.y) {
             float temp = 0;
-            for (int i = 0; i < gridDim.x; i++) {
+            for (int i = 0; i < widthA / blockDim.x; i++) {
                 As[threadIdx.y * blockDim.x + threadIdx.x] = A[idy * widthA + (i * blockDim.x + threadIdx.x)];
                 Bs[threadIdx.y * blockDim.x + threadIdx.x] = B[(i * blockDim.x + threadIdx.y) * widthC + idx];
                 __syncthreads();
@@ -90,7 +90,7 @@ __global__ void matrixMulKernel(const float *A, const float *B, float *C, int wi
     for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < widthC; idx += blockDim.x * gridDim.x) {
         for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < heightC; idy += blockDim.y * gridDim.y) {
             float temp = 0;
-            for (int i = 0; i < gridDim.x * blockDim.x; i++) 
+            for (int i = 0; i < widthA; i++) 
                 temp += A[idy * widthA + i] * B[i * widthC + idx];   // dot product of row and column
             C[idy * widthC + idx] += temp;
         }
@@ -133,11 +133,11 @@ void matrixMul(Matrix* A, Matrix *B, Matrix* C, int blockSize, dim3 grid, int us
 
 int main()
 {
-    const int blockSize = 2;
-    dim3 grid(4, 4);
-    int widthA = 11;
-    int widthC = 11;
-    int heightC = 11;
+    const int blockSize = 4;
+    dim3 grid(2, 2);
+    int widthA = 15;
+    int widthC = 15;
+    int heightC = 15;
 
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
