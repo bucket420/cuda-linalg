@@ -3,13 +3,6 @@
 #include <time.h>
 #include "LinearAlgebra.h"
 
-
-// const int DSIZE = 8;
-// CUDA maximum is 1024 *total* threads in block
-// const float A_val = 1.0f;
-// const float B_val = 2.0f;
-
-
 Matrix::Matrix(int width, int height) : width(width), height(height) {
     this->data = (float*) calloc(this->width * this->height, sizeof(float));
 }
@@ -36,7 +29,7 @@ void Matrix::print() {
 }
 
 void Matrix::pad(int blockSize) {
-    int new_width, new_height;
+    int new_width = this->width, new_height = this->height;
     if (this->width % blockSize == 0 && this->height % blockSize == 0) {
         return;
     }
@@ -92,6 +85,12 @@ void Matrix::transpose() {
     this->height = temp;
 }
 
+IdentityMatrix::IdentityMatrix(int size) : Matrix(size, size) {
+    for (int i = 0; i < size; i++) {
+        this->data[i * size + i] = 1.0f;
+    }
+}
+
 Vector::Vector(int size) {
     this->size = size;
     this->data = (float*) calloc(this->size, sizeof(float));
@@ -131,71 +130,103 @@ void Vector::zero() {
     memset(this->data, 0, this->size * sizeof(float));
 }
 
+void matrixMul(Matrix* mxn, Matrix *nxp, Matrix* mxp) {
+    for (int i = 0; i < mxp->height; i++) {
+        for (int j = 0; j < mxp->width; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < mxn->width; k++) {
+                sum += mxn->data[i * mxn->width + k] * nxp->data[k * nxp->width + j];
+            }
+            mxp->data[i * mxp->width + j] = sum;
+        }
+    }
+}
 
-
-
-__global__ void matrixMulSharedMemoryKernel(const float *A, const float *B, float *C, int widthA, int widthC, int heightC) {
+__global__ void matrixMulSharedMemoryKernel(const float *mxn, const float *nxp, float *mxp, 
+                                            int n, int p, int m, int paddedN, int paddedP, int paddedM) {
     extern __shared__ float cache[];
     float *As = cache;
     float *Bs = &cache[blockDim.x * blockDim.x];
-    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < widthC; idx += blockDim.x * gridDim.x) {
-        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < heightC; idy += blockDim.y * gridDim.y) {
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < paddedP; idx += blockDim.x * gridDim.x) {
+        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < paddedM; idy += blockDim.y * gridDim.y) {
             float temp = 0;
-            for (int i = 0; i < widthA / blockDim.x; i++) {
-                As[threadIdx.y * blockDim.x + threadIdx.x] = A[idy * widthA + (i * blockDim.x + threadIdx.x)];
-                Bs[threadIdx.y * blockDim.x + threadIdx.x] = B[(i * blockDim.x + threadIdx.y) * widthC + idx];
+            for (int i = 0; i < paddedN; i++) {
+                if (i * blockDim.x + threadIdx.x < n && idy < m) {
+                    As[threadIdx.y * blockDim.x + threadIdx.x] = mxn[idy * n + (i * blockDim.x + threadIdx.x)];
+                } else {
+                    As[threadIdx.y * blockDim.x + threadIdx.x] = 0.0f;
+                }
+                if (i * blockDim.x + threadIdx.y < n && idx < p) {
+                    Bs[threadIdx.y * blockDim.x + threadIdx.x] = nxp[(i * blockDim.x + threadIdx.y) * p + idx];
+                } else {
+                    Bs[threadIdx.y * blockDim.x + threadIdx.x] = 0.0f;
+                }
                 __syncthreads();
                 for (int k = 0; k < blockDim.x; k++) {
                     temp += As[threadIdx.y * blockDim.x + k] * Bs[k * blockDim.x + threadIdx.x];
                 }
                 __syncthreads();
             }
-            C[idy * widthC + idx] += temp;
+            if (idx < p && idy < m)
+                mxp[idy * p + idx] = temp;
         }
     }
 }
 
-__global__ void matrixMulKernel(const float *A, const float *B, float *C, int widthA, int widthC, int heightC) {
-    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < widthC; idx += blockDim.x * gridDim.x) {
-        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < heightC; idy += blockDim.y * gridDim.y) {
+__global__ void matrixMulKernel(const float *mxn, const float *nxp, float *mxp, int n, int p, int m) {
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < p; idx += blockDim.x * gridDim.x) {
+        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < m; idy += blockDim.y * gridDim.y) {
             float temp = 0;
-            for (int i = 0; i < widthA; i++) 
-                temp += A[idy * widthA + i] * B[i * widthC + idx];   // dot product of row and column
-            C[idy * widthC + idx] = temp;
+            for (int i = 0; i < n; i++) 
+                temp += mxn[idy * n + i] * nxp[i * p + idx];   // dot product of row and column
+            mxp[idy * p + idx] += temp;
         }
     }
 }
 
-void matrixMulSequential(Matrix* A, Matrix *B, Matrix* C) {
-    for (int i = 0; i < C->height; i++) {
-        for (int j = 0; j < C->width; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < A->width; k++) {
-                sum += A->data[i * A->width + k] * B->data[k * B->width + j];
-            }
-            C->data[i * C->width + j] = sum;
-        }
+void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid, bool useSharedMemory) {
+    int paddedN = mxn->width, paddedP = nxp->width, paddedM = mxp->height;
+    if (mxn->width % blockSize != 0) {
+        paddedN = (mxn->width / blockSize + 1) * blockSize;
     }
-}
-
-void matrixMulCUDA(Matrix* A, Matrix *B, Matrix* C, int blockSize, dim3 grid, bool useSharedMemory) {
-    A->pad(blockSize);
-    B->pad(blockSize);
-    C->pad(blockSize);
-    float *dA, *dB, *dC;
-    cudaMalloc(&dA, A->width * A->height * sizeof(float));
-    cudaMalloc(&dB, B->width * B->height * sizeof(float));
-    cudaMalloc(&dC, C->width * C->height * sizeof(float));
-    cudaMemcpy(dA, A->data, A->width * A->height * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(dB, B->data, B->width * B->height * sizeof(float), cudaMemcpyHostToDevice);
+    if (nxp->width % blockSize != 0) {
+        paddedP = (nxp->width / blockSize + 1) * blockSize;
+    }
+    if (mxp->height % blockSize != 0) {
+        paddedM = (mxp->height / blockSize + 1) * blockSize;
+    }
+    float *dmxn, *dnxp, *dmxp;
+    cudaMalloc(&dmxn, mxn->width * mxn->height * sizeof(float));
+    cudaMalloc(&dnxp, nxp->width * nxp->height * sizeof(float));
+    cudaMalloc(&dmxp, mxp->width * mxp->height * sizeof(float));
+    cudaMemcpy(dmxn, mxn->data, mxn->width * mxn->height * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dnxp, nxp->data, nxp->width * nxp->height * sizeof(float), cudaMemcpyHostToDevice);
     dim3 block(blockSize, blockSize); 
     if (useSharedMemory) {
-        matrixMulSharedMemoryKernel<<<grid, block, 2 * blockSize * blockSize * sizeof(float)>>>(dA, dB, dC, A->width, C->width, C->height);
+        matrixMulSharedMemoryKernel<<<grid, block, 2 * blockSize * blockSize * sizeof(float)>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height, paddedN, paddedP, paddedM);
     } else {
-        matrixMulKernel<<<grid, block>>>(dA, dB, dC, A->width, C->width, C->height);
+        matrixMulKernel<<<grid, block>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height);
     }
-    cudaMemcpy(C->data, dC, C->width * C->height * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaFree(dA);
-    cudaFree(dB);
-    cudaFree(dC);
+    cudaMemcpy(mxp->data, dmxp, mxp->width * mxp->height * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(dmxn);
+    cudaFree(dnxp);
+    cudaFree(dmxp);
+}
+
+float dot(Vector *a, Vector *b) {
+    float sum = 0.0f;
+    for (int i = 0; i < a->size; i++) {
+        sum += a->data[i] * b->data[i];
+    }
+    return sum;
+}
+
+__global__ void dotKernel(const float *a, const float *b, float *c, int size) {
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < size; idx += blockDim.x * gridDim.x) {
+        c[idx] = a[idx] * b[idx];
+    }
+}
+
+float dotCUDA(Vector *a, Vector *b, int blockSize, int numBlocks, bool useSharedMemory) {
+    return 0.0;
 }

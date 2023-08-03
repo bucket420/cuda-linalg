@@ -32,7 +32,14 @@ public:
     void zero();
 };
 
-__global__ void matrixMulSharedMemoryKernel(const float *A, const float *B, float *C, int widthA, int widthC, int heightC);
-__global__ void matrixMulKernel(const float *A, const float *B, float *C, int widthA, int widthC, int heightC);
-void matrixMulSequential(Matrix* A, Matrix *B, Matrix* C);
-void matrixMulCUDA(Matrix* A, Matrix *B, Matrix* C, int blockSize, dim3 grid, bool useSharedMemory);
+class IdentityMatrix : public Matrix {
+public:
+    IdentityMatrix(int size);
+};
+
+void matrixMul(Matrix* mxn, Matrix *nxp, Matrix* mxp);
+void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid, bool useSharedMemory);
+
+float dot(Vector* a, Vector* b);
+float dotCUDA(Vector* a, Vector* b, int blockSize, int numBlocks, bool useSharedMemory=false);
+
