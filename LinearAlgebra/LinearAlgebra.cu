@@ -133,7 +133,7 @@ void Vector::zero() {
 void matrixMul(Matrix* mxn, Matrix *nxp, Matrix* mxp) {
     for (int i = 0; i < mxp->height; i++) {
         for (int j = 0; j < mxp->width; j++) {
-            float sum = 0.0f;
+            float sum = 0.0;
             for (int k = 0; k < mxn->width; k++) {
                 sum += mxn->data[i * mxn->width + k] * nxp->data[k * nxp->width + j];
             }
@@ -142,7 +142,7 @@ void matrixMul(Matrix* mxn, Matrix *nxp, Matrix* mxp) {
     }
 }
 
-__global__ void matrixMulSharedMemoryKernel(const float *mxn, const float *nxp, float *mxp, 
+__global__ void matrixMulSharedMemoryKernelNoPadding(const float *mxn, const float *nxp, float *mxp, 
                                             int n, int p, int m, int paddedN, int paddedP, int paddedM) {
     extern __shared__ float cache[];
     float *As = cache;
@@ -173,18 +173,55 @@ __global__ void matrixMulSharedMemoryKernel(const float *mxn, const float *nxp, 
     }
 }
 
+__global__ void matrixMulSharedMemoryKernelWithPadding(const float *mxn, const float *nxp, float *mxp, int n, int p, int m) {
+        extern __shared__ float cache[];
+    float *As = cache;
+    float *Bs = &cache[blockDim.x * blockDim.x];
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < p; idx += blockDim.x * gridDim.x) {
+        for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < m; idy += blockDim.y * gridDim.y) {
+            float temp = 0;
+            for (int i = 0; i < n / blockDim.x; i++) {
+                As[threadIdx.y * blockDim.x + threadIdx.x] = mxn[idy * n + (i * blockDim.x + threadIdx.x)];
+                Bs[threadIdx.y * blockDim.x + threadIdx.x] = nxp[(i * blockDim.x + threadIdx.y) * p + idx];
+
+                __syncthreads();
+                for (int k = 0; k < blockDim.x; k++) {
+                    temp += As[threadIdx.y * blockDim.x + k] * Bs[k * blockDim.x + threadIdx.x];
+                }
+                __syncthreads();
+            }
+            mxp[idy * p + idx] = temp;
+        }
+    }
+}
+
 __global__ void matrixMulKernel(const float *mxn, const float *nxp, float *mxp, int n, int p, int m) {
     for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < p; idx += blockDim.x * gridDim.x) {
         for (int idy = threadIdx.y + blockDim.y * blockIdx.y; idy < m; idy += blockDim.y * gridDim.y) {
             float temp = 0;
             for (int i = 0; i < n; i++) 
-                temp += mxn[idy * n + i] * nxp[i * p + idx];   // dot product of row and column
-            mxp[idy * p + idx] += temp;
+                temp += mxn[idy * n + i] * nxp[i * p + idx];
+            mxp[idy * p + idx] = temp;
         }
     }
 }
 
-void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid, bool useSharedMemory) {
+void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid) {
+    float *dmxn, *dnxp, *dmxp;
+    cudaMalloc(&dmxn, mxn->width * mxn->height * sizeof(float));
+    cudaMalloc(&dnxp, nxp->width * nxp->height * sizeof(float));
+    cudaMalloc(&dmxp, mxp->width * mxp->height * sizeof(float));
+    cudaMemcpy(dmxn, mxn->data, mxn->width * mxn->height * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dnxp, nxp->data, nxp->width * nxp->height * sizeof(float), cudaMemcpyHostToDevice);
+    dim3 block(blockSize, blockSize); 
+    matrixMulKernel<<<grid, block>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height);
+    cudaMemcpy(mxp->data, dmxp, mxp->width * mxp->height * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(dmxn);
+    cudaFree(dnxp);
+    cudaFree(dmxp);
+}
+
+void matrixMulCUDASharedMemoryNoPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid) {
     int paddedN = mxn->width, paddedP = nxp->width, paddedM = mxp->height;
     if (mxn->width % blockSize != 0) {
         paddedN = (mxn->width / blockSize + 1) * blockSize;
@@ -202,11 +239,25 @@ void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 gr
     cudaMemcpy(dmxn, mxn->data, mxn->width * mxn->height * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(dnxp, nxp->data, nxp->width * nxp->height * sizeof(float), cudaMemcpyHostToDevice);
     dim3 block(blockSize, blockSize); 
-    if (useSharedMemory) {
-        matrixMulSharedMemoryKernel<<<grid, block, 2 * blockSize * blockSize * sizeof(float)>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height, paddedN, paddedP, paddedM);
-    } else {
-        matrixMulKernel<<<grid, block>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height);
-    }
+    matrixMulSharedMemoryKernelNoPadding<<<grid, block, 2 * blockSize * blockSize * sizeof(float)>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height, paddedN, paddedP, paddedM);
+    cudaMemcpy(mxp->data, dmxp, mxp->width * mxp->height * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(dmxn);
+    cudaFree(dnxp);
+    cudaFree(dmxp);
+}
+
+void matrixMulCUDASharedMemoryWithPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid) {
+    mxn->pad(blockSize);
+    nxp->pad(blockSize);
+    mxp->pad(blockSize);
+    float *dmxn, *dnxp, *dmxp;
+    cudaMalloc(&dmxn, mxn->width * mxn->height * sizeof(float));
+    cudaMalloc(&dnxp, nxp->width * nxp->height * sizeof(float));
+    cudaMalloc(&dmxp, mxp->width * mxp->height * sizeof(float));
+    cudaMemcpy(dmxn, mxn->data, mxn->width * mxn->height * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dnxp, nxp->data, nxp->width * nxp->height * sizeof(float), cudaMemcpyHostToDevice);
+    dim3 block(blockSize, blockSize); 
+    matrixMulSharedMemoryKernelWithPadding<<<grid, block, 2 * blockSize * blockSize * sizeof(float)>>>(dmxn, dnxp, dmxp, mxn->width, mxp->width, mxp->height);
     cudaMemcpy(mxp->data, dmxp, mxp->width * mxp->height * sizeof(float), cudaMemcpyDeviceToHost);
     cudaFree(dmxn);
     cudaFree(dnxp);

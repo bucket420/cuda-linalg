@@ -38,7 +38,9 @@ public:
 };
 
 void matrixMul(Matrix* mxn, Matrix *nxp, Matrix* mxp);
-void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid, bool useSharedMemory);
+void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
+void matrixMulCUDASharedMemoryNoPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
+void matrixMulCUDASharedMemoryWithPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
 
 float dot(Vector* a, Vector* b);
 float dotCUDA(Vector* a, Vector* b, int blockSize, int numBlocks, bool useSharedMemory=false);

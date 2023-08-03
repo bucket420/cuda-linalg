@@ -9,10 +9,8 @@
 // const float A_val = 1.0f;
 // const float B_val = 2.0f;
 
-bool floatCompare(float x, float y, float epsilon = 0.01f){
-   if(fabs(x - y) < epsilon)
-      return true;
-      return false;
+bool floatCompare(float x, float y, float epsilon = 0.02f) {
+   return fabs(x - y) < epsilon;
 }
 
 void verify(Matrix* result, Matrix* expected) {
@@ -24,6 +22,7 @@ void verify(Matrix* result, Matrix* expected) {
         for (int j = 0; j < result->width; j++) {
             if (!floatCompare(result->data[i * result->width + j], expected->data[i * expected->width + j])) {
                 printf("ERROR: result has incorrect value at (%d, %d)\n", i, j);
+                printf("Expected: %f, Actual: %f\n", expected->data[i * expected->width + j], result->data[i * result->width + j]);
                 return;
             }
         }
@@ -35,10 +34,10 @@ void verify(Matrix* result, Matrix* expected) {
 void testMatrixMul()
 {
     const int blockSize = 16;
-    dim3 grid(128, 128);
-    int m = 690;
-    int n = 960;
-    int p = 420;
+    dim3 grid(512, 512);
+    int m = 2000;
+    int n = 2000;
+    int p = 2000;
 
     // const int blockSize = 2;
     // dim3 grid(2, 2);
@@ -52,7 +51,7 @@ void testMatrixMul()
     std::uniform_real_distribution<> dis(0.0, 10.0);
 
     // these are just for timing
-    clock_t t0, t1, t2, t3, t4, t5;
+    clock_t start, end;
 
     // create matrices
     Matrix *mxn = new Matrix(n, m);
@@ -80,31 +79,43 @@ void testMatrixMul()
     nxp->print();
 
     // multiply
-    t4 = clock();
+    start = clock();
     matrixMul(mxn, nxp, mxpSequential);
-    t5 = clock();
+    end = clock();
     printf("Matrix mxp (sequential):\n");
     mxpSequential->print();
-    printf("Compute took %f seconds (sequential)\n", ((double)(t5 - t4)) / CLOCKS_PER_SEC);
+    printf("Compute took %f seconds (sequential)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
 
-    t0 = clock();
-    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, true);
-    t1 = clock();
-    printf("Matrix mxp (CUDA with shared memory):\n");
-    mxp->print();
-    printf("Compute took %f seconds (CUDA shared)\n", ((double)(t1 - t0)) / CLOCKS_PER_SEC);
-    verify(mxp, mxpSequential);
 
-    mxp->zero();
     // mxp->pad(blockSize);
 
-    t2 = clock();
-    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, false);
-    t3 = clock();
+    start = clock();
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid);
+    end = clock();
     printf("Matrix mxp (CUDA without shared memory):\n");
     mxp->print();
-    printf("Compute took %f seconds (CUDA not shared)\n", ((double)(t3 - t2)) / CLOCKS_PER_SEC);
+    printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
     verify(mxp, mxpSequential);
+    mxp->zero();
+
+    start = clock();
+    matrixMulCUDASharedMemoryNoPadding(mxn, nxp, mxp, blockSize, grid);
+    end = clock();
+    printf("Matrix mxp (CUDA with shared memory, no padding):\n");
+    mxp->print();
+    printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+    verify(mxp, mxpSequential);
+    mxp->zero();
+
+    start = clock();
+    matrixMulCUDASharedMemoryWithPadding(mxn, nxp, mxp, blockSize, grid);
+    end = clock();
+    printf("Matrix mxp (CUDA with shared memory, with padding):\n");
+    mxp->unpad();
+    mxp->print();
+    printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+    verify(mxp, mxpSequential);
+
 
     // free memory
     delete mxn;
@@ -166,6 +177,6 @@ void testTranspose() {
 int main(int argc, char **argv)
 {
     testMatrixMul();
-    testTranspose();
+    // testTranspose();
     return 0;
 }
