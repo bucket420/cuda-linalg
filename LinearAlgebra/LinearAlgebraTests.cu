@@ -9,8 +9,8 @@
 // const float A_val = 1.0f;
 // const float B_val = 2.0f;
 
-bool floatCompare(float x, float y, float epsilon = 0.02f) {
-   return fabs(x - y) < epsilon;
+bool floatCompare(float nx1, float mx1, float epsilon = 0.02f) {
+   return fabs(nx1 - mx1) < epsilon;
 }
 
 void verify(Matrix* result, Matrix* expected) {
@@ -30,22 +30,30 @@ void verify(Matrix* result, Matrix* expected) {
     printf("SUCCESS: result matches expected\n");
 }
 
+void verify(Vector* result, Vector* expected) {
+    if (result->size != expected->size) {
+        printf("ERROR: result has incorrect dimensions\n");
+        return;
+    }
+    for (int i = 0; i < result->size; i++) {
+        if (!floatCompare(result->data[i], expected->data[i])) {
+            printf("ERROR: result has incorrect value at (%d)\n", i);
+            printf("Expected: %f, Actual: %f\n", expected->data[i], result->data[i]);
+            return;
+        }
+    }
+    printf("SUCCESS: result matches expected\n");
+}
+
 
 void testMatrixMul()
 {
     const int blockSize = 16;
     dim3 grid(512, 512);
-    int m = 2000;
-    int n = 2000;
-    int p = 2000;
-
-    // const int blockSize = 2;
-    // dim3 grid(2, 2);
-    // int m = 13;
-    // int n = 15;
-    // int p = 11;
+    int m = 1000;
+    int n = 1000;
+    int p = 1000;
     
-
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
     std::uniform_real_distribution<> dis(0.0, 10.0);
@@ -88,7 +96,6 @@ void testMatrixMul()
 
 
     // mxp->pad(blockSize);
-
     start = clock();
     matrixMulCUDA(mxn, nxp, mxp, blockSize, grid);
     end = clock();
@@ -116,12 +123,71 @@ void testMatrixMul()
     printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
     verify(mxp, mxpSequential);
 
-
     // free memory
     delete mxn;
     delete nxp;
     delete mxp;
     delete mxpSequential;
+}
+
+void timeMatrixMulCUDA()
+{
+    const int blockSize = 64;
+    dim3 grid(512, 512);
+    int m = 10000;
+    int n = 10000;
+    int p = 10000;
+    
+    std::random_device rd;  // Will be used to obtain a seed for the random number engine
+    std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
+    std::uniform_real_distribution<> dis(0.0, 10.0);
+
+    // these are just for timing
+    clock_t start, end;
+
+    // create matrices
+    Matrix *mxn = new Matrix(n, m);
+    Matrix *nxp = new Matrix(p, n);
+    Matrix *mxp = new Matrix(p, m);
+
+    // initialize matrices
+    for (int i = 0; i < mxn->height; i++) {
+        for (int j = 0; j < mxn->width; j++) {
+            mxn->data[i * mxn->width + j] = dis(gen);
+        }
+    }
+
+    for (int i = 0; i < nxp->height; i++) {
+        for (int j = 0; j < nxp->width; j++) {
+            nxp->data[i * nxp->width + j] = dis(gen);
+        }
+    }
+
+    // mxp->pad(blockSize);
+    start = clock();
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid);
+    end = clock();
+    printf("Matrix mxp (CUDA without shared memory):\n");
+    printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+    mxp->zero();
+
+    start = clock();
+    matrixMulCUDASharedMemoryNoPadding(mxn, nxp, mxp, blockSize, grid);
+    end = clock();
+    printf("Matrix mxp (CUDA with shared memory, no padding):\n");
+    printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+    mxp->zero();
+
+    start = clock();
+    matrixMulCUDASharedMemoryWithPadding(mxn, nxp, mxp, blockSize, grid);
+    end = clock();
+    printf("Matrix mxp (CUDA with shared memory, with padding):\n");
+    printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+
+    // free memory
+    delete mxn;
+    delete nxp;
+    delete mxp;
 }
 
 void testTranspose() {
@@ -174,9 +240,119 @@ void testTranspose() {
     delete C;
 }
 
+void testDot() {
+    const int blockSize = 64;
+    int numBlocks = 512;
+    int size = 100000000;
+
+    clock_t start, end;
+
+    Vector *A = new Vector(size);
+    Vector *B = new Vector(size);
+
+    std::random_device rd;  // Will be used to obtain a seed for the random number engine
+    std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
+    std::uniform_real_distribution<> dis(0.0, 10.0);
+
+    for (int i = 0; i < A->size; i++) {
+        // A->data[i] = dis(gen);
+        A->data[i] = i / (i + 100.0f); 
+    }
+
+    for (int i = 0; i < B->size; i++) {
+        // B->data[i] = dis(gen);
+        B->data[i] = (i + 2.0f) / (i + 1.0f);
+    }
+
+    printf("Vector A:\n");
+    A->print();
+    printf("Vector B:\n");
+    B->print();
+
+    start = clock();
+    float sequential = dot(A, B);
+    end = clock();
+    printf("Dot product (sequential): %f\n", sequential);
+    printf("Compute took %f seconds (sequential)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+
+    start = clock();
+    float cuda = dotCUDA(A, B, blockSize, numBlocks);
+    end = clock();
+    printf("Dot product (CUDA): %f\n", cuda);
+    printf("Compute took %f seconds (CUDA)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+
+    if (floatCompare(sequential, cuda, 1.0f)) {
+        printf("SUCCESS: result matches expected\n");
+    } else {
+        printf("ERROR: result does not match expected\n");
+    }
+
+    delete A;
+    delete B;
+}
+
+void testMatrixVectorMul() {
+    const int blockSize = 64;
+    int numBlocks = 1024;
+    int m = 20000;
+    int n = 20000;
+    
+    clock_t start, end;
+
+    Matrix *mxn = new Matrix(n, m);
+    Vector *nx1 = new Vector(m);
+    Vector *mx1 = new Vector(n);
+    Vector *mx1Sequential = new Vector(n);
+
+    std::random_device rd;  // Will be used to obtain a seed for the random number engine
+    std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
+    std::uniform_real_distribution<> dis(0.0, 10.0);
+
+    // initialize matrices
+    for (int i = 0; i < mxn->height; i++) {
+        for (int j = 0; j < mxn->width; j++) {
+            mxn->data[i * mxn->width + j] = dis(gen);
+            // mxn->data[i * mxn->width + j] = i / (i + 100.0f);
+        }
+    }
+
+    for (int i = 0; i < nx1->size; i++) {
+        nx1->data[i] = dis(gen);
+        // nx1->data[i] = (i + 2.0f) / (i + 1.0f);
+    }
+
+    start = clock();
+    matrixVectorMul(mxn, nx1, mx1Sequential);
+    end = clock();
+    printf("Matrix mxn:\n");
+    mxn->print();
+    printf("Vector nx1:\n");
+    nx1->print();
+    printf("Vector mx1 (sequential):\n");
+    mx1Sequential->print();
+    printf("Compute took %f seconds (sequential)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+
+    start = clock();
+    matrixVectorMulCUDA(mxn, nx1, mx1, blockSize, numBlocks);
+    end = clock();
+    printf("Vector mx1 (CUDA):\n");
+    mx1->print();
+    printf("Compute took %f seconds (CUDA)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+
+    verify(mx1, mx1Sequential);
+
+    delete mxn;
+    delete nx1;
+    delete mx1;
+    delete mx1Sequential;
+}
+
 int main(int argc, char **argv)
 {
-    testMatrixMul();
+    // testMatrixMul();
+    // timeMatrixMulCUDA();
+    // testDot();
     // testTranspose();
+    testMatrixVectorMul();
     return 0;
 }

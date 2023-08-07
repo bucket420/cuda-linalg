@@ -43,5 +43,8 @@ void matrixMulCUDASharedMemoryNoPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, i
 void matrixMulCUDASharedMemoryWithPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
 
 float dot(Vector* a, Vector* b);
-float dotCUDA(Vector* a, Vector* b, int blockSize, int numBlocks, bool useSharedMemory=false);
+float dotCUDA(Vector* a, Vector* b, int blockSize, int numBlocks);
+
+void matrixVectorMul(Matrix* mxn, Vector* nx1, Vector* mx1);
+void matrixVectorMulCUDA(Matrix* mxn, Vector* nx1, Vector* mx1, int blockSize, int numBlocks);
 

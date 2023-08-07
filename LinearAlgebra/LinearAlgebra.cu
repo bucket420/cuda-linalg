@@ -126,6 +126,21 @@ void Vector::unpad() {
     this->padded_size = 0;
 }
 
+void Vector::print() {
+    if (this->size > 16) {
+        printf("Vector too large to print\n");
+        return;
+    }
+    printf("[");
+    for (int i = 0; i < this->size; i++) {
+        printf("%7.2f", this->data[i]);
+        if (i < this->size - 1) {
+            printf(", ");
+        }
+    }
+    printf("]\n");
+}
+
 void Vector::zero() {
     memset(this->data, 0, this->size * sizeof(float));
 }
@@ -274,10 +289,56 @@ float dot(Vector *a, Vector *b) {
 
 __global__ void dotKernel(const float *a, const float *b, float *c, int size) {
     for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < size; idx += blockDim.x * gridDim.x) {
-        c[idx] = a[idx] * b[idx];
+        atomicAdd(c, a[idx] * b[idx]);
     }
 }
 
-float dotCUDA(Vector *a, Vector *b, int blockSize, int numBlocks, bool useSharedMemory) {
-    return 0.0;
+float dotCUDA(Vector *a, Vector *b, int blockSize, int numBlocks) {
+    float c = 0.0f;
+    float *da, *db, *dc;
+    cudaMalloc(&da, a->size * sizeof(float));
+    cudaMalloc(&db, b->size * sizeof(float));
+    cudaMalloc(&dc, sizeof(float));
+    cudaMemcpy(da, a->data, a->size * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(db, b->data, b->size * sizeof(float), cudaMemcpyHostToDevice);
+    dotKernel<<<numBlocks, blockSize>>>(da, db, dc, a->size);
+    cudaMemcpy(&c, dc, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(da);
+    cudaFree(db);
+    cudaFree(dc);
+    return c;
+}
+
+void matrixVectorMul(Matrix* mxn, Vector* nx1, Vector* mx1) {
+    for (int i = 0; i < mxn->height; i++) {
+        float sum = 0.0f;
+        for (int j = 0; j < mxn->width; j++) {
+            sum += mxn->data[i * mxn->width + j] * nx1->data[j];
+        }
+        mx1->data[i] = sum;
+    }
+}
+
+__global__ void matrixVectorMulKernel(const float* mxn, const float* nx1, float* mx1, int m, int n) {
+    for (int idx = threadIdx.x + blockDim.x * blockIdx.x; idx < m; idx += blockDim.x * gridDim.x) {
+        float sum = 0.0f;
+        for (int j = 0; j < n; j++) {
+            sum += mxn[idx * n + j] * nx1[j];
+        }
+        mx1[idx] = sum;
+    }
+}
+
+void matrixVectorMulCUDA(Matrix* mxn, Vector* nx1, Vector* mx1, int blockSize, int numBlocks) {
+    float *dmxn, *dnx1, *dmx1;
+    cudaMalloc(&dmxn, mxn->width * mxn->height * sizeof(float));
+    cudaMalloc(&dnx1, nx1->size * sizeof(float));
+    cudaMalloc(&dmx1, mx1->size * sizeof(float));
+    cudaMemcpy(dmxn, mxn->data, mxn->width * mxn->height * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dnx1, nx1->data, nx1->size * sizeof(float), cudaMemcpyHostToDevice);
+    matrixVectorMulKernel<<<numBlocks, blockSize>>>(dmxn, dnx1, dmx1, mxn->height, mxn->width);
+    cudaMemcpy(mx1->data, dmx1, mx1->size * sizeof(float), cudaMemcpyDeviceToHost);
+    cudaFree(dmxn);
+    cudaFree(dnx1);
+    cudaFree(dmx1);
 }
