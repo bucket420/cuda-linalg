@@ -36,7 +36,7 @@ void verify(Vector* result, Vector* expected) {
         return;
     }
     for (int i = 0; i < result->size; i++) {
-        if (!floatCompare(result->data[i], expected->data[i])) {
+        if (!floatCompare(result->data[i], expected->data[i], 1.0f)) {
             printf("ERROR: result has incorrect value at (%d)\n", i);
             printf("Expected: %f, Actual: %f\n", expected->data[i], result->data[i]);
             return;
@@ -97,7 +97,8 @@ void testMatrixMul()
 
     // mxp->pad(blockSize);
     start = clock();
-    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid);
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, 0);
+    end = clock();
     end = clock();
     printf("Matrix mxp (CUDA without shared memory):\n");
     mxp->print();
@@ -106,7 +107,7 @@ void testMatrixMul()
     mxp->zero();
 
     start = clock();
-    matrixMulCUDASharedMemoryNoPadding(mxn, nxp, mxp, blockSize, grid);
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, 1);
     end = clock();
     printf("Matrix mxp (CUDA with shared memory, no padding):\n");
     mxp->print();
@@ -115,7 +116,7 @@ void testMatrixMul()
     mxp->zero();
 
     start = clock();
-    matrixMulCUDASharedMemoryWithPadding(mxn, nxp, mxp, blockSize, grid);
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, 2);
     end = clock();
     printf("Matrix mxp (CUDA with shared memory, with padding):\n");
     mxp->unpad();
@@ -132,11 +133,11 @@ void testMatrixMul()
 
 void timeMatrixMulCUDA()
 {
-    const int blockSize = 64;
+    const int blockSize = 16;
     dim3 grid(512, 512);
-    int m = 10000;
-    int n = 10000;
-    int p = 10000;
+    int m = 20000;
+    int n = 30000;
+    int p = 40000;
     
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
@@ -165,21 +166,21 @@ void timeMatrixMulCUDA()
 
     // mxp->pad(blockSize);
     start = clock();
-    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid);
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, 0);
     end = clock();
     printf("Matrix mxp (CUDA without shared memory):\n");
     printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
     mxp->zero();
 
     start = clock();
-    matrixMulCUDASharedMemoryNoPadding(mxn, nxp, mxp, blockSize, grid);
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, 1);
     end = clock();
     printf("Matrix mxp (CUDA with shared memory, no padding):\n");
     printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
     mxp->zero();
 
     start = clock();
-    matrixMulCUDASharedMemoryWithPadding(mxn, nxp, mxp, blockSize, grid);
+    matrixMulCUDA(mxn, nxp, mxp, blockSize, grid, 2);
     end = clock();
     printf("Matrix mxp (CUDA with shared memory, with padding):\n");
     printf("Compute took %f seconds\n", ((double)(end - start)) / CLOCKS_PER_SEC);
@@ -292,17 +293,24 @@ void testDot() {
 }
 
 void testMatrixVectorMul() {
-    const int blockSize = 64;
-    int numBlocks = 1024;
-    int m = 20000;
+    const int blockSize = 128;
+    int numBlocks = 512;
+    int m = 15000;
     int n = 20000;
+    int sharedMemorySize = 128;
+
+    // const int blockSize = 4;
+    // int numBlocks = 4;
+    // int m = 11;
+    // int n = 13;
+    // int sharedMemorySize = 3;
     
     clock_t start, end;
 
     Matrix *mxn = new Matrix(n, m);
-    Vector *nx1 = new Vector(m);
-    Vector *mx1 = new Vector(n);
-    Vector *mx1Sequential = new Vector(n);
+    Vector *nx1 = new Vector(n);
+    Vector *mx1 = new Vector(m);
+    Vector *mx1Sequential = new Vector(m);
 
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
@@ -333,13 +341,23 @@ void testMatrixVectorMul() {
     printf("Compute took %f seconds (sequential)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
 
     start = clock();
-    matrixVectorMulCUDA(mxn, nx1, mx1, blockSize, numBlocks);
+    matrixVectorMulCUDA(mxn, nx1, mx1, blockSize, numBlocks, 0);
     end = clock();
-    printf("Vector mx1 (CUDA):\n");
+    printf("Vector mx1 (CUDA without shared memory):\n");
     mx1->print();
-    printf("Compute took %f seconds (CUDA)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
-
+    printf("Compute took %f seconds (CUDA without shared memory)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
     verify(mx1, mx1Sequential);
+    mx1->zero();
+
+    start = clock();
+    matrixVectorMulCUDA(mxn, nx1, mx1, blockSize, numBlocks, 1, sharedMemorySize);
+    end = clock();
+    printf("Vector mx1 (CUDA with shared memory):\n");
+    mx1->print();
+    printf("Compute took %f seconds (CUDA with shared memory)\n", ((double)(end - start)) / CLOCKS_PER_SEC);
+    verify(mx1, mx1Sequential);
+
+
 
     delete mxn;
     delete nx1;

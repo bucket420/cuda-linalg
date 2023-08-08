@@ -1,4 +1,3 @@
-
 class Matrix {
 public:
     float *data;
@@ -38,7 +37,8 @@ public:
 };
 
 void matrixMul(Matrix* mxn, Matrix *nxp, Matrix* mxp);
-void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
+void matrixMulCUDA(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid, int mode=0);
+void matrixMulCUDAGlobalMemory(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
 void matrixMulCUDASharedMemoryNoPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
 void matrixMulCUDASharedMemoryWithPadding(Matrix* mxn, Matrix *nxp, Matrix* mxp, int blockSize, dim3 grid);
 
@@ -46,5 +46,8 @@ float dot(Vector* a, Vector* b);
 float dotCUDA(Vector* a, Vector* b, int blockSize, int numBlocks);
 
 void matrixVectorMul(Matrix* mxn, Vector* nx1, Vector* mx1);
-void matrixVectorMulCUDA(Matrix* mxn, Vector* nx1, Vector* mx1, int blockSize, int numBlocks);
+void matrixVectorMulCUDA(Matrix* mxn, Vector* nx1, Vector* mx1, int blockSize, int numBlocks, int mode=0, int sharedMemorySize=0);
+void matrixVectorMulCUDAGlobalMemory(Matrix* mxn, Vector* nx1, Vector* mx1, int blockSize, int numBlocks);
+void matrixVectorMulCUDASharedlMemoryNoPadding(Matrix* mxn, Vector* nx1, Vector* mx1, int blockSize, int numBlocks);
+
 
