@@ -135,9 +135,9 @@ void timeMatrixMulCUDA()
 {
     const int blockSize = 16;
     dim3 grid(512, 512);
-    int m = 20000;
-    int n = 30000;
-    int p = 40000;
+    int m = 6969;
+    int n = 4242;
+    int p = 9696;
     
     std::random_device rd;  // Will be used to obtain a seed for the random number engine
     std::mt19937 gen(rd()); // Standard mersenne_twister_engine seeded with rd()
@@ -154,13 +154,15 @@ void timeMatrixMulCUDA()
     // initialize matrices
     for (int i = 0; i < mxn->height; i++) {
         for (int j = 0; j < mxn->width; j++) {
-            mxn->data[i * mxn->width + j] = dis(gen);
+            // mxn->data[i * mxn->width + j] = dis(gen);
+            mxn->data[i * mxn->width + j] = i / (i + 100.0f);
         }
     }
 
     for (int i = 0; i < nxp->height; i++) {
         for (int j = 0; j < nxp->width; j++) {
-            nxp->data[i * nxp->width + j] = dis(gen);
+            // nxp->data[i * nxp->width + j] = dis(gen);
+            nxp->data[i * nxp->width + j] = (i + 2.0f) / (i + 1.0f);
         }
     }
 
@@ -295,15 +297,9 @@ void testDot() {
 void testMatrixVectorMul() {
     const int blockSize = 128;
     int numBlocks = 512;
-    int m = 15000;
-    int n = 20000;
-    int sharedMemorySize = 128;
-
-    // const int blockSize = 4;
-    // int numBlocks = 4;
-    // int m = 11;
-    // int n = 13;
-    // int sharedMemorySize = 3;
+    int m = 6969;
+    int n = 4242;
+    int sharedMemorySize = 512;
     
     clock_t start, end;
 
@@ -319,14 +315,14 @@ void testMatrixVectorMul() {
     // initialize matrices
     for (int i = 0; i < mxn->height; i++) {
         for (int j = 0; j < mxn->width; j++) {
-            mxn->data[i * mxn->width + j] = dis(gen);
-            // mxn->data[i * mxn->width + j] = i / (i + 100.0f);
+            // mxn->data[i * mxn->width + j] = dis(gen);
+            mxn->data[i * mxn->width + j] = i / (i + 100.0f);
         }
     }
 
     for (int i = 0; i < nx1->size; i++) {
-        nx1->data[i] = dis(gen);
-        // nx1->data[i] = (i + 2.0f) / (i + 1.0f);
+        // nx1->data[i] = dis(gen);
+        nx1->data[i] = (i + 2.0f) / (i + 1.0f);
     }
 
     start = clock();
@@ -368,7 +364,7 @@ void testMatrixVectorMul() {
 int main(int argc, char **argv)
 {
     // testMatrixMul();
-    // timeMatrixMulCUDA();
+    timeMatrixMulCUDA();
     // testDot();
     // testTranspose();
     testMatrixVectorMul();

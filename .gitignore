@@ -3,3 +3,5 @@
 *.lib
 *.exp
 *.obj
+build
+NBodySimulation
